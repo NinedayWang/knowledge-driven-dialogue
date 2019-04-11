@@ -25,6 +25,7 @@ def preprocessing_for_one_conversation(text,
 
     goal = conversation["goal"]
     knowledge = conversation["knowledge"]
+    knowledge += goal[1:]
     history = conversation["history"]
     if not for_predict:
         response = conversation["response"] if "response" in conversation else "null"
@@ -54,11 +55,12 @@ def preprocessing_for_one_conversation(text,
     knowledge_str2 = '\1'.join([' '.join(spo) for spo in knowledge])
     history_str = ' '.join(history)
 
+    src_goal = ' '.join(goal[0])
     src = chat_path_str + " " + knowledge_str1 + " : " + history_str
     if not for_predict:
-        model_text = '\t'.join([src, response, knowledge_str2])
+        model_text = '\t'.join([src_goal, history_str, src, response, knowledge_str2])
     else:
-        model_text = '\t'.join([src, knowledge_str2])
+        model_text = '\t'.join([src_goal, history_str, src, knowledge_str2])
 
     if topic_generalization:
         topic_list = sorted(topic_dict.items(), key=lambda item: len(item[1]), reverse=True)

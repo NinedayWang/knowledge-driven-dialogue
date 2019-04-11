@@ -126,6 +126,7 @@ class Trainer(object):
                  train_iter,
                  valid_iter,
                  logger,
+                 early_stop,
                  generator=None,
                  valid_metric_name="-loss",
                  num_epochs=1,
@@ -140,6 +141,8 @@ class Trainer(object):
         self.train_iter = train_iter
         self.valid_iter = valid_iter
         self.logger = logger
+        self.early_stop = early_stop
+        self.not_increase = 0
 
         self.generator = generator
         self.is_decreased_valid_metric = valid_metric_name[0] == "-"
@@ -238,6 +241,11 @@ class Trainer(object):
                     is_best = cur_valid_metric > self.best_valid_metric
                 if is_best:
                     self.best_valid_metric = cur_valid_metric
+                    self.not_increase = 0
+                else:
+                    self.not_increase += 1
+                self.logger.info("Not Increase : {}".format(self.not_increase))
+
                 self.save(is_best)
                 if self.lr_scheduler is not None:
                     self.lr_scheduler.step(cur_valid_metric)
@@ -263,6 +271,10 @@ class Trainer(object):
         self.logger.info(valid_mm.report_cum())
         for _ in range(self.epoch, self.num_epochs):
             self.train_epoch()
+
+            if self.not_increase >= self.early_stop:
+                self.logger.info("Early Stop with not increase {} times".format(self.not_increase))
+                break
 
     def save(self, is_best=False):
         """

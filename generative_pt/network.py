@@ -62,7 +62,8 @@ def model_config():
     train_arg.add_argument("--lr", type=float, default=0.00005)
     train_arg.add_argument("--grad_clip", type=float, default=5.0)
     train_arg.add_argument("--dropout", type=float, default=0.3)
-    train_arg.add_argument("--num_epochs", type=int, default=20)
+    train_arg.add_argument("--num_epochs", type=int, default=100)
+    train_arg.add_argument("--early_stop", type=int, default=6)
     train_arg.add_argument("--pretrain_epoch", type=int, default=5)
     train_arg.add_argument("--lr_decay", type=float, default=None)
     train_arg.add_argument("--use_embed", type=str2bool, default=True)
@@ -71,6 +72,7 @@ def model_config():
     train_arg.add_argument("--use_pg", type=str2bool, default=False)
     train_arg.add_argument("--use_gs", type=str2bool, default=False)
     train_arg.add_argument("--use_kd", type=str2bool, default=False)
+    train_arg.add_argument("--use_goal_atte", type=str2bool, default=True)
     train_arg.add_argument("--weight_control", type=str2bool, default=False)
     train_arg.add_argument("--decode_concat", type=str2bool, default=False)
     train_arg.add_argument("--use_posterior", type=str2bool, default=True)
@@ -134,7 +136,7 @@ def main():
                              num_layers=config.num_layers, bidirectional=config.bidirectional,
                              attn_mode=config.attn, with_bridge=config.with_bridge,
                              tie_embedding=config.tie_embedding, dropout=config.dropout,
-                             use_gpu=config.use_gpu, 
+                             use_gpu=config.use_gpu, use_goal_atte=config.use_goal_atte, 
                              use_bow=config.use_bow, use_dssm=config.use_dssm,
                              use_pg=config.use_pg, use_gs=config.use_gs,
                              pretrain_epoch=config.pretrain_epoch,
@@ -195,7 +197,7 @@ def main():
         # Train
         logger.info("Training starts ...")
         trainer = Trainer(model=model, optimizer=optimizer, train_iter=train_iter,
-                          valid_iter=valid_iter, logger=logger, generator=generator,
+                          valid_iter=valid_iter, logger=logger, early_stop=config.early_stop, generator=generator,
                           valid_metric_name="-loss", num_epochs=config.num_epochs,
                           save_dir=config.save_dir, log_steps=config.log_steps,
                           valid_steps=config.valid_steps, grad_clip=config.grad_clip,

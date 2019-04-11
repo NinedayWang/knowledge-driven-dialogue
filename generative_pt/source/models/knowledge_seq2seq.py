@@ -20,6 +20,7 @@ from source.modules.encoders.rnn_encoder import RNNEncoder
 from source.modules.decoders.hgfu_rnn_decoder import RNNDecoder
 from source.utils.criterions import NLLLoss
 from source.utils.misc import Pack
+from source.utils.misc import sequence_mask
 from source.utils.metrics import accuracy
 from source.utils.metrics import attn_accuracy
 from source.utils.metrics import perplexity
@@ -32,7 +33,7 @@ class KnowledgeSeq2Seq(BaseModel):
     def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None,
                  num_layers=1, bidirectional=True, attn_mode="mlp", attn_hidden_size=None, 
                  with_bridge=False, tie_embedding=False, dropout=0.0, use_gpu=False, use_bow=False,
-                 use_kd=False, use_dssm=False, use_posterior=False, weight_control=False, 
+                 use_kd=False, use_dssm=False, use_posterior=False, use_goal_atte=False, weight_control=False, 
                  use_pg=False, use_gs=False, concat=False, pretrain_epoch=0):
         super(KnowledgeSeq2Seq, self).__init__()
 
@@ -56,6 +57,7 @@ class KnowledgeSeq2Seq(BaseModel):
         self.use_pg = use_pg
         self.use_gs = use_gs
         self.use_posterior = use_posterior
+        self.use_goal_atte = use_goal_atte
         self.pretrain_epoch = pretrain_epoch
         self.baseline = 0
 
@@ -68,6 +70,16 @@ class KnowledgeSeq2Seq(BaseModel):
 
         if self.with_bridge:
             self.bridge = nn.Sequential(nn.Linear(self.hidden_size, self.hidden_size), nn.Tanh())
+        
+        if self.use_goal_atte:
+            # self.linear_goal = nn.Linear(
+            #     self.hidden_size, self.hidden_size, bias=True)
+            # self.linear_enc = nn.Linear(
+            #     self.hidden_size, self.hidden_size, bias=False)
+            # self.goal_bridge = nn.Sequential(nn.Tanh(), nn.Linear(self.hidden_size, self.hidden_size))
+            self.goal_bridge = nn.Sequential(
+                nn.Linear(in_features=self.hidden_size*2,out_features=self.hidden_size),
+                nn.Tanh())
 
         if self.tie_embedding:
             assert self.src_vocab_size == self.tgt_vocab_size
@@ -86,6 +98,12 @@ class KnowledgeSeq2Seq(BaseModel):
                                             num_layers=self.num_layers,
                                             bidirectional=self.bidirectional,
                                             dropout=self.dropout)
+        
+        if self.use_goal_atte:
+            self.goal_attention = Attention(query_size=self.hidden_size,
+                                       memory_size=self.hidden_size,
+                                       hidden_size=self.hidden_size,
+                                       mode="dot")
 
         self.prior_attention = Attention(query_size=self.hidden_size,
                                          memory_size=self.hidden_size,
@@ -141,10 +159,26 @@ class KnowledgeSeq2Seq(BaseModel):
         """
         outputs = Pack()
         enc_inputs = _, lengths = inputs.src[0][:, 1:-1], inputs.src[1]-2
-        enc_outputs, enc_hidden = self.encoder(enc_inputs, hidden)
+        enc_outputs, enc_hidden = self.knowledge_encoder(enc_inputs, hidden)
 
         if self.with_bridge:
             enc_hidden = self.bridge(enc_hidden)
+
+        # history 对 goal 做attention
+        if self.use_goal_atte:
+            goal_inputs = _, goal_lengths = inputs.goal[0][:, 1:-1], inputs.goal[1]-2
+            goal_outputs, goal_hidden = self.encoder(goal_inputs, hidden)
+            his_inputs = _, his_lengths = inputs.history[0][:, 1:-1], inputs.history[1]-2
+            his_outputs, his_hidden = self.encoder(his_inputs, hidden)
+            goal_max_len = goal_outputs.size(1)
+            goal_mask = sequence_mask(goal_lengths, goal_max_len).eq(0)
+            weighted_goal, goal_attn = self.goal_attention(query=his_hidden[-1].unsqueeze(1),
+                                                          memory=goal_outputs,
+                                                          mask=goal_mask)
+            # enc_hidden = self.goal_bridge(self.linear_goal(weighted_goal.transpose(0,1))
+            #                               + self.linear_enc(enc_hidden))
+            enc_hidden = self.goal_bridge(
+                torch.cat([weighted_goal.transpose(0,1), enc_hidden], dim=-1))
 
         # knowledge
         batch_size, sent_num, sent  = inputs.cue[0].size()

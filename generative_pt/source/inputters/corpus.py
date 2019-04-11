@@ -299,17 +299,23 @@ class KnowledgeCorpus(Corpus):
         if self.share_vocab:
             self.TGT = self.SRC
             self.CUE = self.SRC
+            self.GOAL = self.SRC
+            self.HIS = self.SRC
         else:
             self.TGT = TextField(tokenize_fn=tokenize,
                                  embed_file=embed_file)
             self.CUE = TextField(tokenize_fn=tokenize,
                                  embed_file=embed_file)
+            self.GOAL = TextField(tokenize_fn=tokenize,
+                                 embed_file=embed_file)
+            self.HIS = TextField(tokenize_fn=tokenize,
+                                 embed_file=embed_file)
 
         if self.with_label:
             self.INDEX = NumberField()
-            self.fields = {'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE, 'index': self.INDEX}
+            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE, 'index': self.INDEX}
         else:
-            self.fields = {'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE}
+            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE}
 
         def src_filter_pred(src):
             """
@@ -333,17 +339,17 @@ class KnowledgeCorpus(Corpus):
         with open(data_file, "r", encoding="utf-8") as f:
             for line in f:
                 if self.with_label:
-                    src, tgt, knowledge, label = line.strip().split('\t')[:4]
+                    src_goal, history_str, src, tgt, knowledge, label = line.strip().split('\t')[:6]
                     filter_knowledge = []
                     for sent in knowledge.split(''):
                         filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
-                    data.append({'src': src, 'tgt': tgt, 'cue': filter_knowledge, 'index': label})
+                    data.append({'goal': src_goal, 'history': history_str, 'src': src, 'tgt': tgt, 'cue': filter_knowledge, 'index': label})
                 else:
-                    src, tgt, knowledge = line.strip().split('\t')[:3]
+                    src_goal, history_str, src, tgt, knowledge = line.strip().split('\t')[:5]
                     filter_knowledge = []
                     for sent in knowledge.split(''):
                         filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
-                    data.append({'src': src, 'tgt': tgt, 'cue':filter_knowledge})
+                    data.append({'goal': src_goal, 'history': history_str, 'src': src, 'tgt': tgt, 'cue':filter_knowledge})
 
         filtered_num = len(data)
         if self.filter_pred is not None:
