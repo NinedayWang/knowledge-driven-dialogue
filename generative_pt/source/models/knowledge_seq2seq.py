@@ -173,7 +173,7 @@ class KnowledgeSeq2Seq(BaseModel):
             tmp_len = inputs.src[1]
             tmp_len[tmp_len > 0] -= 2
             enc_mask = tmp_len.eq(0)
-            enc_inputs = inputs.src[0], tmp_len
+            enc_inputs = inputs.src[0].view(-1, sent)[:, 1:-1].view(batch_size, sent_num, -1), tmp_len
             enc_outputs, enc_hidden, _ = self.encoder(enc_inputs, hidden)
         else:
             enc_mask = None
