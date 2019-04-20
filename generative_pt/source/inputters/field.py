@@ -26,11 +26,13 @@ def tokenize(s):
     """
     tokenize
     """
-    s = re.sub('\d+', NUM, s).lower()
-    # tokens = nltk.RegexpTokenizer(r'\w+|<sil>|[^\w\s]+').tokenize(s)
-    tokens = s.split(' ')
+    if isinstance(s, str):
+        s = re.sub('\d+', NUM, s).lower()
+        # tokens = nltk.RegexpTokenizer(r'\w+|<sil>|[^\w\s]+').tokenize(s)
+        tokens = s.split(' ')
+    else:
+        tokens = [re.sub('\d+', NUM, x).lower() for x in s]
     return tokens
-
 
 class Field(object):
     """

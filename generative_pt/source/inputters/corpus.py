@@ -313,9 +313,9 @@ class KnowledgeCorpus(Corpus):
 
         if self.with_label:
             self.INDEX = NumberField()
-            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE, 'index': self.INDEX}
+            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'src1': self.SRC, 'tgt': self.TGT, 'cue': self.CUE, 'index': self.INDEX}
         else:
-            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE}
+            self.fields = {'goal': self.GOAL, 'history': self.HIS, 'src': self.SRC, 'src1': self.SRC, 'tgt': self.TGT, 'cue': self.CUE}
 
         def src_filter_pred(src):
             """
@@ -340,16 +340,24 @@ class KnowledgeCorpus(Corpus):
             for line in f:
                 if self.with_label:
                     src_goal, history_str, src, tgt, knowledge, label = line.strip().split('\t')[:6]
+                    filter_src = []
                     filter_knowledge = []
+                    for sub in src.split(''):
+                        filter_src.append(' '.join(sub.split()[:self.max_len]))
                     for sent in knowledge.split(''):
                         filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
-                    data.append({'goal': src_goal, 'history': history_str, 'src': src, 'tgt': tgt, 'cue': filter_knowledge, 'index': label})
+                    src1 = ' '.join(filter_src)
+                    data.append({'goal': src_goal, 'history': history_str, 'src': filter_src, 'src1': src1, 'tgt': tgt, 'cue': filter_knowledge, 'index': label})
                 else:
                     src_goal, history_str, src, tgt, knowledge = line.strip().split('\t')[:5]
+                    filter_src = []
                     filter_knowledge = []
+                    for sub in src.split(''):
+                        filter_src.append(' '.join(sub.split()[:self.max_len]))
                     for sent in knowledge.split(''):
                         filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
-                    data.append({'goal': src_goal, 'history': history_str, 'src': src, 'tgt': tgt, 'cue':filter_knowledge})
+                    src1 = ' '.join(filter_src)
+                    data.append({'goal': src_goal, 'history': history_str, 'src': filter_src, 'src1': src1, 'tgt': tgt, 'cue':filter_knowledge})
 
         filtered_num = len(data)
         if self.filter_pred is not None:

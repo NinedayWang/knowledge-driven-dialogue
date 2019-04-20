@@ -17,6 +17,8 @@ import torch.nn.functional as F
 from source.models.base_model import BaseModel
 from source.modules.embedder import Embedder
 from source.modules.encoders.rnn_encoder import RNNEncoder
+from source.modules.encoders.rnn_encoder import HRNNEncoder
+from source.modules.encoders.lstm_attention import LSATEncoder
 from source.modules.decoders.hgfu_rnn_decoder import RNNDecoder
 from source.utils.criterions import NLLLoss
 from source.utils.misc import Pack
@@ -30,7 +32,7 @@ class KnowledgeSeq2Seq(BaseModel):
     """
     KnowledgeSeq2Seq
     """
-    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None,
+    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None, encoder_type="GRU",
                  num_layers=1, bidirectional=True, attn_mode="mlp", attn_hidden_size=None, 
                  with_bridge=False, tie_embedding=False, dropout=0.0, use_gpu=False, use_bow=False,
                  use_kd=False, use_dssm=False, use_posterior=False, use_goal_atte=False, weight_control=False, 
@@ -39,6 +41,7 @@ class KnowledgeSeq2Seq(BaseModel):
 
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
+        self.encoder_type = encoder_type
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.padding_idx = padding_idx
@@ -60,27 +63,34 @@ class KnowledgeSeq2Seq(BaseModel):
         self.use_goal_atte = use_goal_atte
         self.pretrain_epoch = pretrain_epoch
         self.baseline = 0
+        if self.use_goal_atte:
+            self.beta_raw = nn.Parameter(torch.Tensor(1))
+            nn.init.uniform_(self.beta_raw, -0.01, 0.01)
 
         enc_embedder = Embedder(num_embeddings=self.src_vocab_size,
                                 embedding_dim=self.embed_size, padding_idx=self.padding_idx)
 
-        self.encoder = RNNEncoder(input_size=self.embed_size, hidden_size=self.hidden_size,
-                                  embedder=enc_embedder, num_layers=self.num_layers,
-                                  bidirectional=self.bidirectional, dropout=self.dropout)
-
+        if self.encoder_type == 'LSAT':
+            self.encoder = LSATEncoder(input_size=self.embed_size, hidden_size=self.hidden_size,
+                                       embedder=enc_embedder, num_layers=self.num_layers,
+                                       bidirectional=self.bidirectional, dropout=self.dropout)
+        elif self.encoder_type == 'HAN':
+            self.sub_encoder = RNNEncoder(input_size=self.embed_size, hidden_size=self.hidden_size,
+                                      embedder=enc_embedder, num_layers=self.num_layers,
+                                      bidirectional=self.bidirectional, dropout=self.dropout)
+            self.hiera_encoder = RNNEncoder(input_size=self.hidden_size, hidden_size=self.hidden_size,
+                                      num_layers=self.num_layers,
+                                      bidirectional=self.bidirectional, dropout=self.dropout)
+            self.encoder = HRNNEncoder(sub_encoder=self.sub_encoder,
+                                       hiera_encoder=self.hiera_encoder)
+        else:
+            self.encoder = RNNEncoder(input_size=self.embed_size, hidden_size=self.hidden_size,
+                                      embedder=enc_embedder, num_layers=self.num_layers,
+                                      bidirectional=self.bidirectional, dropout=self.dropout)
+        
         if self.with_bridge:
             self.bridge = nn.Sequential(nn.Linear(self.hidden_size, self.hidden_size), nn.Tanh())
         
-        if self.use_goal_atte:
-            # self.linear_goal = nn.Linear(
-            #     self.hidden_size, self.hidden_size, bias=True)
-            # self.linear_enc = nn.Linear(
-            #     self.hidden_size, self.hidden_size, bias=False)
-            # self.goal_bridge = nn.Sequential(nn.Tanh(), nn.Linear(self.hidden_size, self.hidden_size))
-            self.goal_bridge = nn.Sequential(
-                nn.Linear(in_features=self.hidden_size*2,out_features=self.hidden_size),
-                nn.Tanh())
-
         if self.tie_embedding:
             assert self.src_vocab_size == self.tgt_vocab_size
             dec_embedder = enc_embedder
@@ -158,27 +168,30 @@ class KnowledgeSeq2Seq(BaseModel):
         encode
         """
         outputs = Pack()
-        enc_inputs = _, lengths = inputs.src[0][:, 1:-1], inputs.src[1]-2
-        enc_outputs, enc_hidden = self.knowledge_encoder(enc_inputs, hidden)
+        if self.encoder_type == "HAN":
+            lengths = None
+            tmp_len = inputs.src[1]
+            tmp_len[tmp_len > 0] -= 2
+            enc_mask = tmp_len.eq(0)
+            enc_inputs = inputs.src[0], tmp_len
+            enc_outputs, enc_hidden, _ = self.encoder(enc_inputs, hidden)
+        else:
+            enc_mask = None
+            enc_inputs = _, lengths = inputs.src1[0][:, 1:-1], inputs.src1[1] - 2
+            enc_outputs, enc_hidden = self.encoder(enc_inputs, hidden)
 
         if self.with_bridge:
             enc_hidden = self.bridge(enc_hidden)
 
-        # history 对 goal 做attention
+        # src 对 goal 做attention
         if self.use_goal_atte:
             goal_inputs = _, goal_lengths = inputs.goal[0][:, 1:-1], inputs.goal[1]-2
-            goal_outputs, goal_hidden = self.encoder(goal_inputs, hidden)
-            his_inputs = _, his_lengths = inputs.history[0][:, 1:-1], inputs.history[1]-2
-            his_outputs, his_hidden = self.encoder(his_inputs, hidden)
+            goal_outputs, goal_hidden = self.knowledge_encoder(goal_inputs, hidden)
             goal_max_len = goal_outputs.size(1)
             goal_mask = sequence_mask(goal_lengths, goal_max_len).eq(0)
-            weighted_goal, goal_attn = self.goal_attention(query=his_hidden[-1].unsqueeze(1),
+            weighted_goal, goal_attn = self.goal_attention(query=enc_hidden[-1].unsqueeze(1),
                                                           memory=goal_outputs,
                                                           mask=goal_mask)
-            # enc_hidden = self.goal_bridge(self.linear_goal(weighted_goal.transpose(0,1))
-            #                               + self.linear_enc(enc_hidden))
-            enc_hidden = self.goal_bridge(
-                torch.cat([weighted_goal.transpose(0,1), enc_hidden], dim=-1))
 
         # knowledge
         batch_size, sent_num, sent  = inputs.cue[0].size()
@@ -187,10 +200,23 @@ class KnowledgeSeq2Seq(BaseModel):
         cue_inputs = inputs.cue[0].view(-1, sent)[:, 1:-1], tmp_len.view(-1)
         cue_enc_outputs, cue_enc_hidden = self.knowledge_encoder(cue_inputs, hidden)
         cue_outputs = cue_enc_hidden[-1].view(batch_size, sent_num, -1)
-        # Attention
-        weighted_cue, cue_attn = self.prior_attention(query=enc_hidden[-1].unsqueeze(1),
+        # src 对 knowledge 做 Attention
+        src_weighted_cue, src_cue_attn = self.prior_attention(query=enc_hidden[-1].unsqueeze(1),
                                                       memory=cue_outputs,
                                                       mask=inputs.cue[1].eq(0))
+        if self.use_goal_atte:
+            # goal 对 knowledge 做 Attention
+            goal_weighted_cue, goal_cue_attn = self.prior_attention(query=weighted_goal,
+                                                          memory=cue_outputs,
+                                                          mask=inputs.cue[1].eq(0))
+            # 合并
+            beta = nn.functional.sigmoid(self.beta_raw)
+            weighted_cue = beta * src_weighted_cue + (1-beta) * goal_weighted_cue
+            cue_attn = beta * src_cue_attn + (1-beta) * goal_cue_attn
+        else:
+            weighted_cue = src_weighted_cue
+            cue_attn = src_cue_attn
+
         cue_attn = cue_attn.squeeze(1)
         outputs.add(prior_attn=cue_attn)
         indexs = cue_attn.max(dim=1)[1]
@@ -266,6 +292,8 @@ class KnowledgeSeq2Seq(BaseModel):
             hidden=enc_hidden,
             attn_memory=enc_outputs if self.attn_mode else None,
             memory_lengths=lengths if self.attn_mode else None,
+            attn_mask=enc_mask if self.attn_mode else None,
+            goal=weighted_goal if self.use_goal_atte else None,
             knowledge=knowledge)
         return outputs, dec_init_state
 

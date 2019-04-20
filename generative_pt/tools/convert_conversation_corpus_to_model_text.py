@@ -25,7 +25,7 @@ def preprocessing_for_one_conversation(text,
 
     goal = conversation["goal"]
     knowledge = conversation["knowledge"]
-    knowledge += goal[1:]
+    # knowledge += goal[1:]
     history = conversation["history"]
     if not for_predict:
         response = conversation["response"] if "response" in conversation else "null"
@@ -51,12 +51,13 @@ def preprocessing_for_one_conversation(text,
         topic_dict["person_topic_b"] = topic_b
 
     chat_path_str = ' '.join([' '.join(spo) for spo in goal])
-    knowledge_str1 = ' '.join([' '.join(spo) for spo in knowledge])
+    knowledge_str1 = '\1'.join([' '.join(spo) for spo in knowledge])
     knowledge_str2 = '\1'.join([' '.join(spo) for spo in knowledge])
     history_str = ' '.join(history)
+    history_str2 = '\1'.join(history)
 
     src_goal = ' '.join(goal[0])
-    src = chat_path_str + " " + knowledge_str1 + " : " + history_str
+    src = chat_path_str + "\1" + knowledge_str1 + "\1" + history_str2
     if not for_predict:
         model_text = '\t'.join([src_goal, history_str, src, response, knowledge_str2])
     else:

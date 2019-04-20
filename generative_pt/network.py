@@ -43,6 +43,7 @@ def model_config():
 
     # Network
     net_arg = parser.add_argument_group("Network")
+    net_arg.add_argument("--encoder_type", type=str, default="GRU")
     net_arg.add_argument("--embed_size", type=int, default=300)
     net_arg.add_argument("--hidden_size", type=int, default=800)
     net_arg.add_argument("--bidirectional", type=str2bool, default=True)
@@ -72,7 +73,7 @@ def model_config():
     train_arg.add_argument("--use_pg", type=str2bool, default=False)
     train_arg.add_argument("--use_gs", type=str2bool, default=False)
     train_arg.add_argument("--use_kd", type=str2bool, default=False)
-    train_arg.add_argument("--use_goal_atte", type=str2bool, default=True)
+    train_arg.add_argument("--use_goal_atte", type=str2bool, default=False)
     train_arg.add_argument("--weight_control", type=str2bool, default=False)
     train_arg.add_argument("--decode_concat", type=str2bool, default=False)
     train_arg.add_argument("--use_posterior", type=str2bool, default=True)
@@ -132,7 +133,7 @@ def main():
     model = KnowledgeSeq2Seq(src_vocab_size=corpus.SRC.vocab_size,
                              tgt_vocab_size=corpus.TGT.vocab_size,
                              embed_size=config.embed_size, hidden_size=config.hidden_size,
-                             padding_idx=corpus.padding_idx,
+                             padding_idx=corpus.padding_idx, encoder_type=config.encoder_type,
                              num_layers=config.num_layers, bidirectional=config.bidirectional,
                              attn_mode=config.attn, with_bridge=config.with_bridge,
                              tie_embedding=config.tie_embedding, dropout=config.dropout,
