@@ -54,14 +54,17 @@ def sequence_mask(lengths, max_len=None):
     """
     Creates a boolean mask from sequence lengths.
     """
-    if max_len is None:
-        max_len = lengths.max().item()
-    mask = torch.arange(0, max_len, dtype=torch.long).type_as(lengths)
-    mask = mask.unsqueeze(0)
-    mask = mask.repeat(1, *lengths.size(), 1)
-    mask = mask.squeeze(0)
-    mask = mask.lt(lengths.unsqueeze(-1))
-    #mask = mask.repeat(*lengths.size(), 1).lt(lengths.unsqueeze(-1))
+    if isinstance(lengths[0], list):
+        mask = [sequence_mask(l, max_len) for l in lengths]
+    else:
+        if max_len is None:
+            max_len = lengths.max().item()
+        mask = torch.arange(0, max_len, dtype=torch.long).type_as(lengths)
+        mask = mask.unsqueeze(0)
+        mask = mask.repeat(1, *lengths.size(), 1)
+        mask = mask.squeeze(0)
+        mask = mask.lt(lengths.unsqueeze(-1))
+        #mask = mask.repeat(*lengths.size(), 1).lt(lengths.unsqueeze(-1))
     return mask
 
 

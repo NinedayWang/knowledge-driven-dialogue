@@ -34,6 +34,7 @@ class RNNDecoder(nn.Module):
                  attn_hidden_size=None,
                  memory_size=None,
                  feature_size=None,
+                 goal_size=None,
                  dropout=0.0,
                  concat=False):
         super(RNNDecoder, self).__init__()
@@ -49,12 +50,18 @@ class RNNDecoder(nn.Module):
         self.feature_size = feature_size
         self.dropout = dropout
         self.concat = concat
+        self.goal_size = goal_size
 
         self.rnn_input_size = self.input_size
         self.out_input_size = self.hidden_size
         self.cue_input_size = self.hidden_size
         self.goal_input_size = self.hidden_size
 
+        if self.goal_size is not None:
+            self.rnn_input_size += self.goal_size
+            self.out_input_size += self.goal_size
+            self.cue_input_size += self.goal_size
+        
         if self.feature_size is not None:
             self.rnn_input_size += self.feature_size
             self.cue_input_size += self.feature_size
@@ -83,24 +90,14 @@ class RNNDecoder(nn.Module):
                               dropout=self.dropout if self.num_layers > 1 else 0,
                               batch_first=True)
         
-        self.goal_rnn = nn.GRU(input_size=self.goal_input_size,
-                          hidden_size=self.hidden_size,
-                          num_layers=self.num_layers,
-                          dropout=self.dropout if self.num_layers > 1 else 0,
-                          batch_first=True)
-        
         self.fc1 = nn.Linear(self.hidden_size, self.hidden_size)
         self.fc2 = nn.Linear(self.hidden_size, self.hidden_size)
-        self.fc_goal = nn.Linear(self.hidden_size, self.hidden_size)
         if self.concat:
             self.fc3 = nn.Linear(self.hidden_size * 2, self.hidden_size)
-            self.fc3_goal = nn.Linear(self.hidden_size * 3, self.hidden_size)
         else:
             self.fc3 = nn.Linear(self.hidden_size * 2, 1)
-            self.fc3_goal = nn.Linear(self.hidden_size * 3, 3)
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
-        self.softmax = nn.Softmax(dim=-1)
 
         if self.out_input_size > self.hidden_size:
             self.output_layer = nn.Sequential(
@@ -154,7 +151,6 @@ class RNNDecoder(nn.Module):
         hidden = state.hidden
         rnn_input_list = []
         cue_input_list = []
-        goal_input_list = []
         out_input_list = []
         output = Pack()
 
@@ -165,16 +161,17 @@ class RNNDecoder(nn.Module):
         input = input.unsqueeze(1)
         rnn_input_list.append(input)
         cue_input_list.append(state.knowledge)
-        if state.goal is not None:
-            goal_input_list.append(state.goal)
 
         if self.feature_size is not None:
             feature = state.feature.unsqueeze(1)
             rnn_input_list.append(feature)
             cue_input_list.append(feature)
-            if state.goal is not None:
-                goal_input_list.append(feature)
 
+        if state.goal is not None:
+            rnn_input_list.append(state.goal)
+            cue_input_list.append(state.goal)
+            out_input_list.append(state.goal)
+        
         if self.attn_mode is not None:
             attn_memory = state.attn_memory
             attn_mask = state.attn_mask
@@ -184,8 +181,6 @@ class RNNDecoder(nn.Module):
                                                     mask=attn_mask)
             rnn_input_list.append(weighted_context)
             cue_input_list.append(weighted_context)
-            if state.goal is not None:
-                goal_input_list.append(weighted_context)
             out_input_list.append(weighted_context)
             output.add(attn=attn)
 
@@ -195,25 +190,13 @@ class RNNDecoder(nn.Module):
         cue_input = torch.cat(cue_input_list, dim=-1)
         cue_output, cue_hidden = self.cue_rnn(cue_input, hidden)
         
-        if state.goal is not None:
-            goal_input = torch.cat(goal_input_list, dim=-1)
-            goal_output, goal_hidden = self.goal_rnn(goal_input, hidden)
-
         h_y = self.tanh(self.fc1(rnn_hidden))
         h_cue = self.tanh(self.fc2(cue_hidden))
-        if state.goal is not None:
-            h_goal = self.tanh(self.fc_goal(goal_hidden))
-            if self.concat:
-                new_hidden = self.fc3_goal(torch.cat([h_y, h_cue, h_goal], dim=-1))
-            else:
-                k = self.softmax(self.fc3_goal(torch.cat([h_y, h_cue, h_goal], dim=-1)))
-                new_hidden = k[:,:,0].unsqueeze(-1) * h_y + k[:,:,1].unsqueeze(-1) * h_cue + k[:,:,2].unsqueeze(-1) * h_goal
+        if self.concat:
+            new_hidden = self.fc3(torch.cat([h_y, h_cue], dim=-1))
         else:
-            if self.concat:
-                new_hidden = self.fc3(torch.cat([h_y, h_cue], dim=-1))
-            else:
-                k = self.sigmoid(self.fc3(torch.cat([h_y, h_cue], dim=-1)))
-                new_hidden = k * h_y + (1-k) * h_cue
+            k = self.sigmoid(self.fc3(torch.cat([h_y, h_cue], dim=-1)))
+            new_hidden = k * h_y + (1 - k) * h_cue
         out_input_list.append(new_hidden.transpose(0, 1))
 
         out_input = torch.cat(out_input_list, dim=-1)

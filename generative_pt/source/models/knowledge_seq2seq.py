@@ -63,7 +63,9 @@ class KnowledgeSeq2Seq(BaseModel):
         self.use_goal_atte = use_goal_atte
         self.pretrain_epoch = pretrain_epoch
         self.baseline = 0
+        self.goal_size = None
         if self.use_goal_atte:
+            self.goal_size = embed_size
             self.beta_raw = nn.Parameter(torch.Tensor(1))
             nn.init.uniform_(self.beta_raw, -0.01, 0.01)
 
@@ -93,27 +95,32 @@ class KnowledgeSeq2Seq(BaseModel):
         
         if self.tie_embedding:
             assert self.src_vocab_size == self.tgt_vocab_size
-            dec_embedder = enc_embedder
-            knowledge_embedder = enc_embedder
+            self.dec_embedder = enc_embedder
+            self.knowledge_embedder = enc_embedder
         else:
-            dec_embedder = Embedder(num_embeddings=self.tgt_vocab_size,
+            self.dec_embedder = Embedder(num_embeddings=self.tgt_vocab_size,
                                     embedding_dim=self.embed_size, padding_idx=self.padding_idx)
-            knowledge_embedder = Embedder(num_embeddings=self.tgt_vocab_size,
+            self.knowledge_embedder = Embedder(num_embeddings=self.tgt_vocab_size,
                                           embedding_dim=self.embed_size,
                                           padding_idx=self.padding_idx)
 
         self.knowledge_encoder = RNNEncoder(input_size=self.embed_size,
                                             hidden_size=self.hidden_size,
-                                            embedder=knowledge_embedder,
+                                            embedder=self.knowledge_embedder,
                                             num_layers=self.num_layers,
                                             bidirectional=self.bidirectional,
                                             dropout=self.dropout)
         
         if self.use_goal_atte:
             self.goal_attention = Attention(query_size=self.hidden_size,
-                                       memory_size=self.hidden_size,
+                                       memory_size=self.goal_size,
                                        hidden_size=self.hidden_size,
-                                       mode="dot")
+                                       mode="mlp")
+
+            self.goal_prior_attention = Attention(query_size=self.goal_size,
+                                             memory_size=self.hidden_size,
+                                             hidden_size=self.hidden_size,
+                                             mode="mlp")
 
         self.prior_attention = Attention(query_size=self.hidden_size,
                                          memory_size=self.hidden_size,
@@ -126,9 +133,9 @@ class KnowledgeSeq2Seq(BaseModel):
                                              mode="dot")
 
         self.decoder = RNNDecoder(input_size=self.embed_size, hidden_size=self.hidden_size,
-                                  output_size=self.tgt_vocab_size, embedder=dec_embedder,
+                                  output_size=self.tgt_vocab_size, embedder=self.dec_embedder,
                                   num_layers=self.num_layers, attn_mode=self.attn_mode,
-                                  memory_size=self.hidden_size, feature_size=None,
+                                  memory_size=self.hidden_size, feature_size=None, goal_size=self.goal_size,
                                   dropout=self.dropout, concat=concat)
         self.log_softmax = nn.LogSoftmax(dim=-1)
         self.softmax = nn.Softmax(dim=-1)
@@ -169,12 +176,16 @@ class KnowledgeSeq2Seq(BaseModel):
         """
         outputs = Pack()
         if self.encoder_type == "HAN":
+            batch_size, sent_num, sent = inputs.src[0].size()
             lengths = None
             tmp_len = inputs.src[1]
             tmp_len[tmp_len > 0] -= 2
             enc_mask = tmp_len.eq(0)
             enc_inputs = inputs.src[0].view(-1, sent)[:, 1:-1].view(batch_size, sent_num, -1), tmp_len
-            enc_outputs, enc_hidden, _ = self.encoder(enc_inputs, hidden)
+            enc_outputs, enc_hidden, (sub_outputs, sub_mask) = self.encoder(enc_inputs, sub_hidden=hidden, return_all_sub_outputs=True)
+            if sub_outputs is not None:
+                enc_outputs = sub_outputs
+                enc_mask = sub_mask
         else:
             enc_mask = None
             enc_inputs = _, lengths = inputs.src1[0][:, 1:-1], inputs.src1[1] - 2
@@ -186,11 +197,12 @@ class KnowledgeSeq2Seq(BaseModel):
         # src 对 goal 做attention
         if self.use_goal_atte:
             goal_inputs = _, goal_lengths = inputs.goal[0][:, 1:-1], inputs.goal[1]-2
-            goal_outputs, goal_hidden = self.knowledge_encoder(goal_inputs, hidden)
-            goal_max_len = goal_outputs.size(1)
+            goal_inputs, goal_lengths = goal_inputs
+            goal_embed = self.knowledge_embedder(goal_inputs)
+            goal_max_len = goal_embed.size(1)
             goal_mask = sequence_mask(goal_lengths, goal_max_len).eq(0)
             weighted_goal, goal_attn = self.goal_attention(query=enc_hidden[-1].unsqueeze(1),
-                                                          memory=goal_outputs,
+                                                          memory=goal_embed,
                                                           mask=goal_mask)
 
         # knowledge
@@ -206,7 +218,7 @@ class KnowledgeSeq2Seq(BaseModel):
                                                       mask=inputs.cue[1].eq(0))
         if self.use_goal_atte:
             # goal 对 knowledge 做 Attention
-            goal_weighted_cue, goal_cue_attn = self.prior_attention(query=weighted_goal,
+            goal_weighted_cue, goal_cue_attn = self.goal_prior_attention(query=weighted_goal,
                                                           memory=cue_outputs,
                                                           mask=inputs.cue[1].eq(0))
             # 合并

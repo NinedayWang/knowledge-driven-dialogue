@@ -14,6 +14,7 @@ import torch.nn as nn
 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
+from source.utils.misc import sequence_mask
 
 
 class RNNEncoder(nn.Module):
@@ -123,7 +124,7 @@ class HRNNEncoder(nn.Module):
         self.hiera_encoder = hiera_encoder
 
     def forward(self, inputs, features=None, sub_hidden=None, hiera_hidden=None,
-                return_last_sub_outputs=False):
+                return_last_sub_outputs=False, return_all_sub_outputs=False):
         """
         inputs: Tuple[Tensor(batch_size, max_hiera_len, max_sub_len), 
                 Tensor(batch_size, max_hiera_len)]
@@ -157,5 +158,10 @@ class HRNNEncoder(nn.Module):
             max_len = last_sub_lengths.max()
             last_sub_outputs = last_sub_outputs[:, :max_len]
             return hiera_outputs, hiera_hidden, (last_sub_outputs, last_sub_lengths)
+        elif return_all_sub_outputs:
+            sub_outputs = sub_outputs.view(batch_size, -1, self.sub_encoder.hidden_size)  # hidden_size * num_layers
+            sub_mask = sequence_mask(lengths, max_sub_len)
+            sub_mask = sub_mask.view(batch_size, -1)
+            return hiera_outputs, hiera_hidden, (sub_outputs, sub_mask)
         else:
             return hiera_outputs, hiera_hidden, None
