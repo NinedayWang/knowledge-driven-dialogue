@@ -55,7 +55,6 @@ class RNNDecoder(nn.Module):
         self.rnn_input_size = self.input_size
         self.out_input_size = self.hidden_size
         self.cue_input_size = self.hidden_size
-        self.goal_input_size = self.hidden_size
 
         if self.goal_size is not None:
             self.rnn_input_size += self.goal_size
@@ -65,7 +64,6 @@ class RNNDecoder(nn.Module):
         if self.feature_size is not None:
             self.rnn_input_size += self.feature_size
             self.cue_input_size += self.feature_size
-            self.goal_input_size += self.feature_size
 
         if self.attn_mode is not None:
             self.attention = Attention(query_size=self.hidden_size,
@@ -75,7 +73,6 @@ class RNNDecoder(nn.Module):
                                        project=False)
             self.rnn_input_size += self.memory_size
             self.cue_input_size += self.memory_size
-            self.goal_input_size += self.memory_size
             self.out_input_size += self.memory_size
 
         self.rnn = nn.GRU(input_size=self.rnn_input_size,
