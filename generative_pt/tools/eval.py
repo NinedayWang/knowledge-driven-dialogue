@@ -165,9 +165,12 @@ bleu1, bleu2 = calc_bleu(sents)
 # calc distinct
 distinct1, distinct2 = calc_distinct(sents)
 
+score = f1 * 100 + bleu1 * 100 + bleu2 * 100
+
 output_str = "F1: %.2f%%\n" % (f1 * 100)
 output_str += "BLEU1: %.3f%%\n" % bleu1
 output_str += "BLEU2: %.3f%%\n" % bleu2
 output_str += "DISTINCT1: %.3f%%\n" % distinct1
 output_str += "DISTINCT2: %.3f%%\n" % distinct2
+output_str += "SCORE: %.3f%%\n" % score
 sys.stdout.write(output_str)
