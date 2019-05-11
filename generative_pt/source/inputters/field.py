@@ -14,6 +14,7 @@ import nltk
 import torch
 from tqdm import tqdm
 from collections import Counter
+from source.inputters.bpe_encoder import Encoder
 
 PAD = "<pad>"
 UNK = "<unk>"
@@ -26,10 +27,12 @@ def tokenize(s):
     """
     tokenize
     """
+    bpe = Encoder.load("./data/bpe")
     if isinstance(s, str):
         s = re.sub('\d+', NUM, s).lower()
         # tokens = nltk.RegexpTokenizer(r'\w+|<sil>|[^\w\s]+').tokenize(s)
-        tokens = s.split(' ')
+        # tokens = s.split(' ')
+        tokens = bpe.tokenize(s)
     else:
         tokens = [re.sub('\d+', NUM, x).lower() for x in s]
     return tokens
