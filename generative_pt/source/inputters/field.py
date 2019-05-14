@@ -27,12 +27,12 @@ def tokenize(s):
     """
     tokenize
     """
-    bpe = Encoder.load("./data/bpe")
+    # bpe = Encoder.load("./data/bpe")
     if isinstance(s, str):
         s = re.sub('\d+', NUM, s).lower()
         # tokens = nltk.RegexpTokenizer(r'\w+|<sil>|[^\w\s]+').tokenize(s)
-        # tokens = s.split(' ')
-        tokens = bpe.tokenize(s)
+        tokens = s.split(' ')
+        # tokens = bpe.tokenize(s)
     else:
         tokens = [re.sub('\d+', NUM, x).lower() for x in s]
     return tokens

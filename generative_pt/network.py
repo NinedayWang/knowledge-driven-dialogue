@@ -43,7 +43,7 @@ def model_config():
 
     # Network
     net_arg = parser.add_argument_group("Network")
-    net_arg.add_argument("--encoder_type", type=str, default="GRU")
+    net_arg.add_argument("--encoder_type", type=str, default="LSTA")
     net_arg.add_argument("--embed_size", type=int, default=300)
     net_arg.add_argument("--hidden_size", type=int, default=800)
     net_arg.add_argument("--bidirectional", type=str2bool, default=True)
@@ -64,7 +64,7 @@ def model_config():
     train_arg.add_argument("--grad_clip", type=float, default=5.0)
     train_arg.add_argument("--dropout", type=float, default=0.3)
     train_arg.add_argument("--num_epochs", type=int, default=100)
-    train_arg.add_argument("--early_stop", type=int, default=6)
+    train_arg.add_argument("--early_stop", type=int, default=15)
     train_arg.add_argument("--pretrain_epoch", type=int, default=5)
     train_arg.add_argument("--lr_decay", type=float, default=None)
     train_arg.add_argument("--use_embed", type=str2bool, default=True)
@@ -74,6 +74,7 @@ def model_config():
     train_arg.add_argument("--use_gs", type=str2bool, default=False)
     train_arg.add_argument("--use_kd", type=str2bool, default=False)
     train_arg.add_argument("--use_goal_atte", type=str2bool, default=False)
+    train_arg.add_argument("--use_teacher_force", type=int, default=100)
     train_arg.add_argument("--weight_control", type=str2bool, default=False)
     train_arg.add_argument("--decode_concat", type=str2bool, default=False)
     train_arg.add_argument("--use_posterior", type=str2bool, default=True)
@@ -109,6 +110,13 @@ def main():
     main
     """
     config = model_config()
+    
+    # Logger definition
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+    fh = logging.FileHandler(os.path.join(config.save_dir, "train.log"))
+    logger.addHandler(fh)
+
     if config.check:
         config.save_dir = "./tmp/"
     config.use_gpu = torch.cuda.is_available() and config.gpu >= 0
@@ -130,7 +138,8 @@ def main():
     test_iter = corpus.create_batches(
         config.batch_size, "test", shuffle=False, device=device)
     # Model definition
-    model = KnowledgeSeq2Seq(src_vocab_size=corpus.SRC.vocab_size,
+    model = KnowledgeSeq2Seq(logger=logger,
+                             src_vocab_size=corpus.SRC.vocab_size,
                              tgt_vocab_size=corpus.TGT.vocab_size,
                              embed_size=config.embed_size, hidden_size=config.hidden_size,
                              padding_idx=corpus.padding_idx, encoder_type=config.encoder_type,
@@ -140,6 +149,7 @@ def main():
                              use_gpu=config.use_gpu, use_goal_atte=config.use_goal_atte, 
                              use_bow=config.use_bow, use_dssm=config.use_dssm,
                              use_pg=config.use_pg, use_gs=config.use_gs,
+                             use_teacher_force=config.use_teacher_force,
                              pretrain_epoch=config.pretrain_epoch,
                              use_posterior=config.use_posterior,
                              weight_control=config.weight_control,
@@ -162,6 +172,10 @@ def main():
         metrics, scores = evaluate(model, test_iter)
         print(metrics.report_cum())
         print("Generating ...")
+        #generator = TopKGenerator(model=model,
+        #                          src_field=corpus.SRC, tgt_field=corpus.TGT, cue_field=corpus.CUE,
+        #                          max_length=config.max_dec_len, ignore_unk=config.ignore_unk,
+        #                          length_average=config.length_average, use_gpu=config.use_gpu)
         evaluate_generation(generator, test_iter, save_file=config.gen_file, verbos=True)
     else:
         # Load word embeddings
@@ -185,10 +199,10 @@ def main():
         if not os.path.exists(config.save_dir):
             os.makedirs(config.save_dir)
         # Logger definition
-        logger = logging.getLogger(__name__)
-        logging.basicConfig(level=logging.DEBUG, format="%(message)s")
-        fh = logging.FileHandler(os.path.join(config.save_dir, "train.log"))
-        logger.addHandler(fh)
+        # logger = logging.getLogger(__name__)
+        # logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+        # fh = logging.FileHandler(os.path.join(config.save_dir, "train.log"))
+        # logger.addHandler(fh)
         # Save config
         params_file = os.path.join(config.save_dir, "params.json")
         with open(params_file, 'w') as fp:

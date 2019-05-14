@@ -32,11 +32,11 @@ class KnowledgeSeq2Seq(BaseModel):
     """
     KnowledgeSeq2Seq
     """
-    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None, encoder_type="GRU",
+    def __init__(self, logger, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None, encoder_type="GRU",
                  num_layers=1, bidirectional=True, attn_mode="mlp", attn_hidden_size=None, 
                  with_bridge=False, tie_embedding=False, dropout=0.0, use_gpu=False, use_bow=False,
                  use_kd=False, use_dssm=False, use_posterior=False, use_goal_atte=False, weight_control=False, 
-                 use_pg=False, use_gs=False, concat=False, pretrain_epoch=0):
+                 use_pg=False, use_gs=False, use_teacher_force=100, concat=False, pretrain_epoch=0):
         super(KnowledgeSeq2Seq, self).__init__()
 
         self.src_vocab_size = src_vocab_size
@@ -132,8 +132,9 @@ class KnowledgeSeq2Seq(BaseModel):
                                              hidden_size=self.hidden_size,
                                              mode="dot")
 
-        self.decoder = RNNDecoder(input_size=self.embed_size, hidden_size=self.hidden_size,
+        self.decoder = RNNDecoder(logger=logger, input_size=self.embed_size, hidden_size=self.hidden_size,
                                   output_size=self.tgt_vocab_size, embedder=self.dec_embedder,
+                                  use_teacher_force=use_teacher_force,
                                   num_layers=self.num_layers, attn_mode=self.attn_mode,
                                   memory_size=self.hidden_size, feature_size=None, goal_size=self.goal_size,
                                   dropout=self.dropout, concat=concat)
@@ -316,13 +317,13 @@ class KnowledgeSeq2Seq(BaseModel):
         log_prob, state, output = self.decoder.decode(input, state)
         return log_prob, state, output
 
-    def forward(self, enc_inputs, dec_inputs, hidden=None, is_training=False):
+    def forward(self, enc_inputs, dec_inputs, hidden=None, is_training=False, epoch=-1):
         """
         forward
         """
         outputs, dec_init_state = self.encode(
                 enc_inputs, hidden, is_training=is_training)
-        log_probs, _ = self.decoder(dec_inputs, dec_init_state)
+        log_probs, _ = self.decoder(dec_inputs, dec_init_state, is_training, epoch)
         outputs.add(logits=log_probs)
         return outputs
 
@@ -404,7 +405,7 @@ class KnowledgeSeq2Seq(BaseModel):
         dec_inputs = inputs.tgt[0][:, :-1], inputs.tgt[1] - 1
         target = inputs.tgt[0][:, 1:]
 
-        outputs = self.forward(enc_inputs, dec_inputs, is_training=is_training)
+        outputs = self.forward(enc_inputs, dec_inputs, is_training=is_training, epoch=epoch)
         metrics, scores = self.collect_metrics(outputs, target, epoch=epoch)
 
         loss = metrics.loss

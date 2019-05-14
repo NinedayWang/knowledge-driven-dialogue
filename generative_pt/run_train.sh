@@ -6,7 +6,7 @@
 ################################################################################
 
 # set gpu id to use
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 # generalizes target_a/target_b of goal for all outputs, replaces them with slot mark
 TOPIC_GENERALIZATION=1
@@ -55,4 +55,4 @@ done
 cp ${datapath}/${prefix}.dev ${datapath}/${prefix}.test
 
 # step 4: train model, you can find the model file in ./models/ after training
-${pythonpath} ./network.py --gpu 0 > log.txt
+${pythonpath} ./network.py --gpu 2 --batch_size 32 --attn mlp --valid_steps 200 --early_stop 10 --pretrain_epoch 2 --use_teacher_force 5 > log.txt
