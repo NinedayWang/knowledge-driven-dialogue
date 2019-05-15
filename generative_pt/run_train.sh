@@ -55,4 +55,4 @@ done
 cp ${datapath}/${prefix}.dev ${datapath}/${prefix}.test
 
 # step 4: train model, you can find the model file in ./models/ after training
-${pythonpath} ./network.py --gpu 2 --batch_size 32 --attn mlp --valid_steps 200 --early_stop 10 --pretrain_epoch 2 --use_teacher_force 5 > log.txt
+${pythonpath} ./network.py --gpu 1 --batch_size 32 --attn mlp --valid_steps 300 --early_stop 30 --pretrain_epoch 2 --use_teacher_force 4 > log.txt

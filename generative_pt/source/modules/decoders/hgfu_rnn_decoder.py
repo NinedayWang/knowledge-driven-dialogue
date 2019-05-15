@@ -204,11 +204,13 @@ class RNNDecoder(nn.Module):
         out_input = torch.cat(out_input_list, dim=-1)
         state.hidden = new_hidden
 
-        if is_training:
-            return out_input, state, output
-        else:
-            log_prob = self.output_layer(out_input)
-            return log_prob, state, output
+        # if is_training:
+        #    return out_input, state, output
+        # else:
+        #    log_prob = self.output_layer(out_input)
+        #    return log_prob, state, output
+        log_prob = self.output_layer(out_input)
+        return log_prob, state, output
 
     def forward(self, inputs, state, is_training, epoch):
         """
@@ -217,8 +219,11 @@ class RNNDecoder(nn.Module):
         inputs, lengths = inputs
         batch_size, max_len = inputs.size()
 
-        out_inputs = inputs.new_zeros(
-            size=(batch_size, max_len, self.out_input_size),
+        # out_inputs = inputs.new_zeros(
+        #    size=(batch_size, max_len, self.out_input_size),
+        #    dtype=torch.float)
+        log_probs = inputs.new_zeros(
+            size=(batch_size, max_len, self.output_size),
             dtype=torch.float)
 
         # sort by lengths
@@ -229,29 +234,27 @@ class RNNDecoder(nn.Module):
         # number of valid input (i.e. not padding index) in each time step
         num_valid_list = sequence_mask(sorted_lengths).int().sum(dim=0)
 
-        if is_training:
-            use_teacher_forcing = (random.random() < (self.use_teacher_force/epoch))
-        else:
-            use_teacher_forcing = False
-        # self.logger.info("epoch {}".format(epoch))
-        # self.logger.info("use_teacher_forcing {}".format(str(use_teacher_forcing)))
+        for i, num_valid in enumerate(num_valid_list):
+            if is_training:
+                use_teacher_forcing = (random.random() < (self.use_teacher_force/epoch))
+            else:
+                use_teacher_forcing = False
 
-        if use_teacher_forcing:
-            for i, num_valid in enumerate(num_valid_list):
-                dec_input = inputs[:num_valid, i]  #y_(t-1)
+            if use_teacher_forcing:
+                dec_input = inputs[:num_valid, i]  # y_(t-1)
                 valid_state = state.slice_select(num_valid)
-                out_input, valid_state, _ = self.decode(
-                    dec_input, valid_state, is_training=True)
-                state.hidden[:, :num_valid] = valid_state.hidden
-                out_inputs[:num_valid, i] = out_input.squeeze(1)
 
-            log_probs = self.output_layer(out_inputs)
-        else:
-            input_var = inputs[:, 0]
-            log_probs = inputs.new_zeros(
-                size=(batch_size, max_len, self.output_size),
-                dtype=torch.float)
-            for i, num_valid in enumerate(num_valid_list):
+                log_prob, valid_state, _ = self.decode(
+                    dec_input, valid_state, is_training=True)
+
+                state.hidden[:, :num_valid] = valid_state.hidden
+                log_probs[:num_valid, i] = log_prob.squeeze(1)
+
+                _, topi = log_probs[:, i].data.topk(1)
+                input_var = topi.squeeze(1)
+            else:
+                if i == 0:
+                    input_var = inputs[:, 0]
                 # Run the RNN one step forward
                 output, state, attn = self.decode(input_var, state)
 
