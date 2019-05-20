@@ -14,6 +14,7 @@ import torch.nn as nn
 import random
 
 from source.modules.attention import Attention
+from source.modules.attention import CopyAttention
 from source.modules.decoders.state import DecoderState
 from source.utils.misc import Pack
 from source.utils.misc import sequence_mask
@@ -27,10 +28,12 @@ class RNNDecoder(nn.Module):
     """
     def __init__(self,
                  logger,
+                 max_size,
                  input_size,
                  hidden_size,
                  output_size,
                  embedder=None,
+                 unk_idx=None,
                  use_teacher_force=100,
                  num_layers=1,
                  attn_mode=None,
@@ -43,10 +46,12 @@ class RNNDecoder(nn.Module):
         super(RNNDecoder, self).__init__()
 
         self.logger = logger
+        self.max_size = max_size
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.embedder = embedder
+        self.unk_idx = unk_idx
         self.use_teacher_force = use_teacher_force
         self.num_layers = num_layers
         self.attn_mode = None if attn_mode == 'none' else attn_mode
@@ -80,6 +85,8 @@ class RNNDecoder(nn.Module):
             self.cue_input_size += self.memory_size
             self.out_input_size += self.memory_size
 
+        self.copy_attn = CopyAttention(dim=self.hidden_size)
+
         self.rnn = nn.GRU(input_size=self.rnn_input_size,
                           hidden_size=self.hidden_size,
                           num_layers=self.num_layers,
@@ -98,6 +105,9 @@ class RNNDecoder(nn.Module):
             self.fc3 = nn.Linear(self.hidden_size * 2, self.hidden_size)
         else:
             self.fc3 = nn.Linear(self.hidden_size * 2, 1)
+        
+        self.p = nn.Linear(self.hidden_size + self.memory_size, 1)
+        
         self.tanh = nn.Tanh()
         self.sigmoid = nn.Sigmoid()
 
@@ -118,6 +128,9 @@ class RNNDecoder(nn.Module):
     def initialize_state(self,
                          hidden,
                          feature=None,
+                         coverage=None,
+                         coverage_loss=None,
+                         attn_content=None,
                          attn_memory=None,
                          attn_mask=None,
                          memory_lengths=None,
@@ -139,6 +152,9 @@ class RNNDecoder(nn.Module):
         init_state = DecoderState(
             hidden=hidden,
             feature=feature,
+            coverage=coverage,
+            coverage_loss=coverage_loss,
+            attn_content=attn_content,
             attn_memory=attn_memory,
             attn_mask=attn_mask,
             goal=goal,
@@ -157,7 +173,7 @@ class RNNDecoder(nn.Module):
         output = Pack()
 
         if self.embedder is not None:
-            input = self.embedder(input)
+            input = self.embedder(input, self.unk_idx)
 
         # shape: (batch_size, 1, input_size)
         input = input.unsqueeze(1)
@@ -204,12 +220,45 @@ class RNNDecoder(nn.Module):
         out_input = torch.cat(out_input_list, dim=-1)
         state.hidden = new_hidden
 
+        log_prob = self.output_layer(out_input)
+        exp = log_prob.new_zeros(size=(log_prob.size(0), log_prob.size(1), self.max_size - self.output_size))
+        log_prob = torch.cat([log_prob, exp], dim=-1)
+
+        # copy
+        if state.attn_content is not None:
+            copy_attn_memory = state.attn_memory
+            copy_attn_mask = state.attn_mask
+            copy_query = hidden[-1].unsqueeze(1)
+            _, copy_attn, state.coverage = self.copy_attn(query=copy_query,
+                                          memory=copy_attn_memory,
+                                          coverage=state.coverage,
+                                          mask=copy_attn_mask)
+            
+            copy_attn = copy_attn.view(copy_attn.size(0), -1)
+            coverage = state.coverage.view(state.coverage.size(0), -1)
+            batch_size, max_len = copy_attn.size()
+            coverage_loss = torch.sum(torch.min(copy_attn.reshape(-1,1),
+                                                coverage.reshape(-1,1)).reshape(batch_size, max_len), 1)
+            state.coverage_loss += coverage_loss
+
+            
+            
+            index = state.attn_content
+            attn_value = copy_attn.new_zeros(
+                size=(copy_attn.size(0), self.max_size),
+                dtype=torch.float)
+            attn_value = attn_value.scatter_(1, index, copy_attn).unsqueeze(1)
+
+            p = self.sigmoid(self.p(torch.cat([weighted_context, hidden.transpose(0, 1)], dim=-1)))
+
+            log_prob = (1 - p) * log_prob + p * attn_value
+
         # if is_training:
         #    return out_input, state, output
         # else:
         #    log_prob = self.output_layer(out_input)
         #    return log_prob, state, output
-        log_prob = self.output_layer(out_input)
+
         return log_prob, state, output
 
     def forward(self, inputs, state, is_training, epoch):
@@ -223,7 +272,7 @@ class RNNDecoder(nn.Module):
         #    size=(batch_size, max_len, self.out_input_size),
         #    dtype=torch.float)
         log_probs = inputs.new_zeros(
-            size=(batch_size, max_len, self.output_size),
+            size=(batch_size, max_len, self.max_size),
             dtype=torch.float)
 
         # sort by lengths
@@ -238,7 +287,7 @@ class RNNDecoder(nn.Module):
             if is_training:
                 use_teacher_forcing = (random.random() < (self.use_teacher_force/epoch))
             else:
-                use_teacher_forcing = False
+                use_teacher_forcing = True
 
             if use_teacher_forcing:
                 dec_input = inputs[:num_valid, i]  # y_(t-1)

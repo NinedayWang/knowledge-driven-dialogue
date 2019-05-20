@@ -27,11 +27,13 @@ class Corpus(object):
                  data_dir,
                  data_prefix,
                  min_freq=0,
-                 max_vocab_size=None):
+                 max_vocab_size=None,
+                 copy=False):
         self.data_dir = data_dir
         self.data_prefix = data_prefix
         self.min_freq = min_freq
         self.max_vocab_size = max_vocab_size
+        self.copy = copy
 
         prepared_data_file = data_prefix + "_" + str(max_vocab_size) + ".data.pt"
         prepared_vocab_file = data_prefix + "_" + str(max_vocab_size) + ".vocab.pt"
@@ -54,6 +56,7 @@ class Corpus(object):
         self.load_data(self.prepared_data_file)
 
         self.padding_idx = self.TGT.stoi[self.TGT.pad_token]
+        self.unk_idx = self.TGT.stoi[self.TGT.unk_token]
 
     def reload(self, data_type='test'):
         """
@@ -90,9 +93,9 @@ class Corpus(object):
 
         for name, vocab in vocab_dict.items():
             if name in self.fields:
-                self.fields[name].load_vocab(vocab)
+                self.fields[name].load_vocab(vocab, self.max_vocab_size, self.copy)
         print("Vocabulary size of fields:",
-              " ".join("{}-{}".format(name.upper(), field.vocab_size) 
+              " ".join("{}-{}-{}".format(name.upper(), field.vocab_size, field.max_size) 
                 for name, field in self.fields.items() 
                     if isinstance(field, TextField)))
 
@@ -127,7 +130,8 @@ class Corpus(object):
                 if field.vocab_size == 0:
                     field.build_vocab(field_data_dict[field],
                                       min_freq=self.min_freq,
-                                      max_size=self.max_vocab_size)
+                                      max_size=self.max_vocab_size,
+                                      copy=self.copy)
                 vocab_dict[name] = field.dump_vocab()
         return vocab_dict
 
@@ -284,11 +288,13 @@ class KnowledgeCorpus(Corpus):
                  max_len=100,
                  embed_file=None,
                  share_vocab=False,
-                 with_label=False):
+                 with_label=False,
+                 copy=False):
         super(KnowledgeCorpus, self).__init__(data_dir=data_dir,
                                               data_prefix=data_prefix,
                                               min_freq=min_freq,
-                                              max_vocab_size=max_vocab_size)
+                                              max_vocab_size=max_vocab_size,
+                                              copy=copy)
         self.min_len = min_len
         self.max_len = max_len
         self.share_vocab = share_vocab

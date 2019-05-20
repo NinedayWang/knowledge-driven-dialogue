@@ -25,6 +25,7 @@ class RNNEncoder(nn.Module):
                  input_size,
                  hidden_size,
                  embedder=None,
+                 unk_idx=None,
                  num_layers=1,
                  bidirectional=True,
                  dropout=0.0):
@@ -38,6 +39,7 @@ class RNNEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.rnn_hidden_size = rnn_hidden_size
         self.embedder = embedder
+        self.unk_idx = unk_idx
         self.num_layers = num_layers
         self.bidirectional = bidirectional
         self.dropout = dropout
@@ -59,7 +61,7 @@ class RNNEncoder(nn.Module):
             inputs, lengths = inputs, None
 
         if self.embedder is not None:
-            rnn_inputs = self.embedder(inputs)
+            rnn_inputs = self.embedder(inputs, self.unk_idx)
         else:
             rnn_inputs = inputs
 

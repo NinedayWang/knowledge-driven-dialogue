@@ -84,6 +84,7 @@ def model_config():
     gen_arg.add_argument("--max_dec_len", type=int, default=30)
     gen_arg.add_argument("--ignore_unk", type=str2bool, default=True)
     gen_arg.add_argument("--length_average", type=str2bool, default=True)
+    gen_arg.add_argument("--copy", type=str2bool, default=True)
     gen_arg.add_argument("--gen_file", type=str, default="./test.result")
     gen_arg.add_argument("--gold_score_file", type=str, default="./gold.scores")
 
@@ -127,7 +128,7 @@ def main():
                              min_freq=0, max_vocab_size=config.max_vocab_size,
                              min_len=config.min_len, max_len=config.max_len,
                              embed_file=config.embed_file, with_label=config.with_label,
-                             share_vocab=config.share_vocab)
+                             share_vocab=config.share_vocab, copy=config.copy)
     corpus.load()
     if config.test and config.ckpt:
         corpus.reload(data_type='test')
@@ -139,10 +140,13 @@ def main():
         config.batch_size, "test", shuffle=False, device=device)
     # Model definition
     model = KnowledgeSeq2Seq(logger=logger,
-                             src_vocab_size=corpus.SRC.vocab_size,
-                             tgt_vocab_size=corpus.TGT.vocab_size,
+                             src_vocab_size=corpus.SRC.max_size,
+                             tgt_vocab_size=corpus.TGT.max_size,
+                             src_max_size=corpus.SRC.vocab_size,
+                             tgt_max_size=corpus.TGT.vocab_size,                 
                              embed_size=config.embed_size, hidden_size=config.hidden_size,
-                             padding_idx=corpus.padding_idx, encoder_type=config.encoder_type,
+                             padding_idx=corpus.padding_idx, unk_idx=corpus.unk_idx, 
+                             encoder_type=config.encoder_type,
                              num_layers=config.num_layers, bidirectional=config.bidirectional,
                              attn_mode=config.attn, with_bridge=config.with_bridge,
                              tie_embedding=config.tie_embedding, dropout=config.dropout,
@@ -153,7 +157,8 @@ def main():
                              pretrain_epoch=config.pretrain_epoch,
                              use_posterior=config.use_posterior,
                              weight_control=config.weight_control,
-                             concat=config.decode_concat)
+                             concat=config.decode_concat,
+                             copy=config.copy)
     model_name = model.__class__.__name__
     # Generator definition
     generator = TopKGenerator(model=model,

@@ -11,12 +11,22 @@ File: source/encoders/embedder.py
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Embedder(nn.Embedding):
     """
     Embedder
     """
+    def forward(self, input, unk_idx):
+        idx = torch.gt(input, self.num_embeddings-1).long()
+        # print(input[idx])
+        _idx = idx.eq(0).long()
+        input = torch.mul(input, _idx) + idx * unk_idx
+        return F.embedding(
+            input, self.weight, self.padding_idx, self.max_norm,
+            self.norm_type, self.scale_grad_by_freq, self.sparse)
+
     def load_embeddings(self, embeds, scale=0.05):
         """
         load_embeddings

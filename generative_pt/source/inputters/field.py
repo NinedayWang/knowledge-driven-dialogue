@@ -149,9 +149,10 @@ class TextField(Field):
         self.itos = []
         self.stoi = {}
         self.vocab_size = 0
+        self.max_size = 0
         self.embeddings = None
 
-    def build_vocab(self, texts, min_freq=0, max_size=None):
+    def build_vocab(self, texts, min_freq=0, max_size=None, copy=False):
         """
         build_vocab
         """
@@ -185,7 +186,7 @@ class TextField(Field):
         self.itos = list(self.specials)
 
         if max_size is not None:
-            max_size = max_size + len(self.itos)
+            self.max_size = max_size + len(self.itos)
 
         # sort by frequency, then alphabetically
         words_and_frequencies = sorted(counter.items(), key=lambda tup: tup[0])
@@ -193,7 +194,7 @@ class TextField(Field):
 
         cover = 0
         for word, freq in words_and_frequencies:
-            if freq < min_freq or len(self.itos) == max_size:
+            if copy == False and (freq < min_freq or len(self.itos) == self.max_size):
                 break
             self.itos.append(word)
             cover += freq
@@ -204,6 +205,9 @@ class TextField(Field):
         self.stoi = {tok: i for i, tok in enumerate(self.itos)}
         self.vocab_size = len(self.itos)
 
+        if copy == False or self.max_size > self.vocab_size:
+            self.max_size = self.vocab_size
+        
         if self.embed_file is not None:
             self.embeddings = self.build_word_embeddings(self.embed_file)
 
@@ -246,13 +250,16 @@ class TextField(Field):
                  "embeddings": self.embeddings}
         return vocab
 
-    def load_vocab(self, vocab):
+    def load_vocab(self, vocab, max_size, copy):
         """
         load_vocab
         """
         self.itos = vocab["itos"]
         self.stoi = {tok: i for i, tok in enumerate(self.itos)}
         self.vocab_size = len(self.itos)
+        self.max_size = max_size + len(self.specials)
+        if copy and self.max_size > self.vocab_size:
+            self.max_size = self.vocab_size
         self.embeddings = vocab["embeddings"]
 
     def str2num(self, string):

@@ -32,19 +32,23 @@ class KnowledgeSeq2Seq(BaseModel):
     """
     KnowledgeSeq2Seq
     """
-    def __init__(self, logger, src_vocab_size, tgt_vocab_size, embed_size, hidden_size, padding_idx=None, encoder_type="GRU",
+    def __init__(self, logger, src_vocab_size, tgt_vocab_size, src_max_size, tgt_max_size,
+                 embed_size, hidden_size, padding_idx=None, unk_idx=None, encoder_type="GRU",
                  num_layers=1, bidirectional=True, attn_mode="mlp", attn_hidden_size=None, 
                  with_bridge=False, tie_embedding=False, dropout=0.0, use_gpu=False, use_bow=False,
                  use_kd=False, use_dssm=False, use_posterior=False, use_goal_atte=False, weight_control=False, 
-                 use_pg=False, use_gs=False, use_teacher_force=100, concat=False, pretrain_epoch=0):
+                 use_pg=False, use_gs=False, use_teacher_force=100, concat=False, copy=False, pretrain_epoch=0):
         super(KnowledgeSeq2Seq, self).__init__()
 
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
+        self.src_max_size = src_max_size
+        self.tgt_max_size = tgt_max_size
         self.encoder_type = encoder_type
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.padding_idx = padding_idx
+        self.unk_idx = unk_idx
         self.num_layers = num_layers
         self.bidirectional = bidirectional
         self.attn_mode = attn_mode
@@ -62,6 +66,7 @@ class KnowledgeSeq2Seq(BaseModel):
         self.use_posterior = use_posterior
         self.use_goal_atte = use_goal_atte
         self.pretrain_epoch = pretrain_epoch
+        self.copy = copy
         self.baseline = 0
         self.goal_size = None
         if self.use_goal_atte:
@@ -87,7 +92,8 @@ class KnowledgeSeq2Seq(BaseModel):
                                        hiera_encoder=self.hiera_encoder)
         else:
             self.encoder = RNNEncoder(input_size=self.embed_size, hidden_size=self.hidden_size,
-                                      embedder=enc_embedder, num_layers=self.num_layers,
+                                      embedder=enc_embedder,
+                                      unk_idx=self.unk_idx, num_layers=self.num_layers,
                                       bidirectional=self.bidirectional, dropout=self.dropout)
         
         if self.with_bridge:
@@ -107,6 +113,7 @@ class KnowledgeSeq2Seq(BaseModel):
         self.knowledge_encoder = RNNEncoder(input_size=self.embed_size,
                                             hidden_size=self.hidden_size,
                                             embedder=self.knowledge_embedder,
+                                            unk_idx=self.unk_idx,
                                             num_layers=self.num_layers,
                                             bidirectional=self.bidirectional,
                                             dropout=self.dropout)
@@ -132,9 +139,10 @@ class KnowledgeSeq2Seq(BaseModel):
                                              hidden_size=self.hidden_size,
                                              mode="dot")
 
-        self.decoder = RNNDecoder(logger=logger, input_size=self.embed_size, hidden_size=self.hidden_size,
+        self.decoder = RNNDecoder(logger=logger, max_size=self.tgt_max_size, 
+                                  input_size=self.embed_size, hidden_size=self.hidden_size,
                                   output_size=self.tgt_vocab_size, embedder=self.dec_embedder,
-                                  use_teacher_force=use_teacher_force,
+                                  unk_idx=self.unk_idx, use_teacher_force=use_teacher_force,
                                   num_layers=self.num_layers, attn_mode=self.attn_mode,
                                   memory_size=self.hidden_size, feature_size=None, goal_size=self.goal_size,
                                   dropout=self.dropout, concat=concat)
@@ -147,7 +155,7 @@ class KnowledgeSeq2Seq(BaseModel):
             self.bow_output_layer = nn.Sequential(
                     nn.Linear(in_features=self.hidden_size, out_features=self.hidden_size),
                     nn.Tanh(),
-                    nn.Linear(in_features=self.hidden_size, out_features=self.tgt_vocab_size),
+                    nn.Linear(in_features=self.hidden_size, out_features=self.tgt_max_size),
                     nn.LogSoftmax(dim=-1))
 
         if self.use_dssm:
@@ -159,7 +167,7 @@ class KnowledgeSeq2Seq(BaseModel):
             self.knowledge_dropout = nn.Dropout()
 
         if self.padding_idx is not None:
-            self.weight = torch.ones(self.tgt_vocab_size)
+            self.weight = torch.ones(self.tgt_max_size)
             self.weight[self.padding_idx] = 0
         else:
             self.weight = None
@@ -303,6 +311,11 @@ class KnowledgeSeq2Seq(BaseModel):
 
         dec_init_state = self.decoder.initialize_state(
             hidden=enc_hidden,
+            coverage=enc_inputs[0].new_zeros(size=(enc_inputs[0].size(0), enc_inputs[0].size(1)),
+                                             dtype=torch.float) if self.copy else None,
+            coverage_loss=enc_inputs[0].new_zeros(size=(enc_inputs[0].size(0), 1),
+                                                  dtype=torch.float).squeeze(1) if self.copy else None,
+            attn_content=enc_inputs[0] if self.copy else None,
             attn_memory=enc_outputs if self.attn_mode else None,
             memory_lengths=lengths if self.attn_mode else None,
             attn_mask=enc_mask if self.attn_mode else None,
@@ -323,8 +336,8 @@ class KnowledgeSeq2Seq(BaseModel):
         """
         outputs, dec_init_state = self.encode(
                 enc_inputs, hidden, is_training=is_training)
-        log_probs, _ = self.decoder(dec_inputs, dec_init_state, is_training, epoch)
-        outputs.add(logits=log_probs)
+        log_probs, state = self.decoder(dec_inputs, dec_init_state, is_training, epoch)
+        outputs.add(logits=log_probs, coverage_loss=state.coverage_loss)
         return outputs
 
     def collect_metrics(self, outputs, target, epoch=-1):
@@ -351,6 +364,10 @@ class KnowledgeSeq2Seq(BaseModel):
         acc = accuracy(logits, target, padding_idx=self.padding_idx)
         metrics.add(nll=(nll_loss, num_words), acc=acc)
 
+        if self.copy:
+            coverage_loss = torch.sum(outputs.coverage_loss)
+            metrics.add(coverage_loss=coverage_loss)
+        
         if self.use_posterior:
             kl_loss = self.kl_loss(torch.log(outputs.prior_attn + 1e-10),
                                    outputs.posterior_attn.detach())
@@ -381,6 +398,8 @@ class KnowledgeSeq2Seq(BaseModel):
                (self.use_bow is not True and self.use_dssm is not True):
                 loss += nll_loss
                 loss += kl_loss
+                if self.copy:
+                    loss += coverage_loss
                 if self.use_pg:
                     posterior_probs = outputs.posterior_attn.gather(1, outputs.indexs.view(-1, 1))
                     reward = -perplexity(logits, target, self.weight, self.padding_idx) * 100
@@ -393,6 +412,8 @@ class KnowledgeSeq2Seq(BaseModel):
                 metrics.add(attn_acc=attn_acc)
         else:
             loss += nll_loss
+            if self.copy:
+                loss += coverage_loss
 
         metrics.add(loss=loss)
         return metrics, scores
